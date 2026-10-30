@@ -450,11 +450,16 @@ def page_outline(html: str) -> str:
     lines.append(f"標題：{soup.title.get_text(strip=True) if soup.title else '(無)'}")
 
     def safe_value(raw: str) -> str:
-        # 只保留代碼類字串（日期、英文、數字）；含中文的值一律略過，避免個資外流
+        # 只保留代碼類字串（日期、英文、數字）；含中文的值一律略過，避免個資外流。
+        # 進一步：純數字且長度>=6（例如學號）也略過——代碼/日期都含字母或斜線。
         raw = raw or ""
+        if not raw:
+            return ""
         if re.fullmatch(r"[\d/:A-Za-z\- ]{0,40}", raw):
+            if re.fullmatch(r"\d{6,}", raw):
+                return "(略)"   # 疑似學號/身分證，擋掉
             return raw
-        return "(略)" if raw else ""
+        return "(略)"
 
     for tag in soup.find_all(["input", "select", "button"]):
         name = tag.get("name") or ""
@@ -546,13 +551,12 @@ def login(session: requests.Session, account: str, password: str):
     resp2 = post_form(session, LOGIN_URL, data, referer=resp.url)
     soup2 = BeautifulSoup(resp2.text, "html.parser")
 
-    err = detect_login_error(soup2)
-    if err:
-        raise ToolError(f"登入失敗：{err}")
-
-    # 仍停在登入頁（還有帳號輸入欄）＝帳號或密碼不對
+    # 判斷成功與否，以「是否還停在登入頁」為準（還有帳號欄＝失敗）。
+    # 注意：登入成功後 Label1 會顯示「日期(Date)：」這類頁面標籤，不是錯誤訊息，
+    # 所以只有在仍停在登入頁時，才把 Label1 的文字當錯誤。
     if soup2.select_one("#MainContent_TxtUSERNO") is not None:
-        raise ToolError("登入失敗：帳號或密碼不正確（頁面仍停在登入頁）。")
+        err = detect_login_error(soup2) or "帳號或密碼不正確"
+        raise ToolError(f"登入失敗：{err}")
 
     return resp2
 
@@ -652,7 +656,8 @@ def recognize_captcha(img_bytes: bytes) -> str:
             raise ToolError("沒有安裝 ddddocr，請先 pip install -r requirements.txt")
         _ocr_engine = ddddocr.DdddOcr(det=False, ocr=True, show_ad=False)
     text = _ocr_engine.classification(img_bytes)
-    return re.sub(r"\s+", "", text).upper()
+    # 只保留英數大寫（驗證碼固定 5 碼英數）；擋掉 OCR 誤讀出的中文字/符號
+    return re.sub(r"[^A-Z0-9]", "", text.upper())
 
 
 CAPTCHA_SRC_HINT = re.compile(r"captcha|verify|valid|checkcode|check_code|rand|secode|codeimg", re.I)
@@ -952,11 +957,19 @@ def cmd_book(args) -> int:
             "那個時間再試（可以加 --wait-open 直接等到 00:00）。")
 
     # 2) 帳號密碼：執行時輸入，不寫進任何檔案
-    print("\n[2/5] 輸入帳號密碼（只在這次執行使用，不會寫進任何檔案）")
-    account = input("  帳號（@gms.ndhu.edu.tw 的 @ 前綴）: ").strip()
+    #    也可用環境變數 NDHU_USER / NDHU_PASS（例如由領隊代跑時），同樣不落檔。
+    print("\n[2/5] 帳號密碼（只在這次執行使用，不會寫進任何檔案）")
+    account = os.environ.get("NDHU_USER", "").strip()
+    password = os.environ.get("NDHU_PASS", "")
+    if account and password:
+        print("      已從環境變數 NDHU_USER / NDHU_PASS 讀取。")
+    else:
+        if not account:
+            account = input("  帳號（@gms.ndhu.edu.tw 的 @ 前綴）: ").strip()
+        if not password:
+            password = getpass.getpass("  密碼（不會顯示）: ")
     if not account:
         raise ToolError("沒有輸入帳號，停止。")
-    password = getpass.getpass("  密碼（不會顯示）: ")
     if not password:
         raise ToolError("沒有輸入密碼，停止。")
 

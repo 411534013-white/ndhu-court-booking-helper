@@ -9,7 +9,8 @@
 
 | 檔案 | 用途 |
 | --- | --- |
-| `court_booking.py` | 主程式（所有功能都在裡面） |
+| `booker_pw.py` | **正式搶場腳本（Playwright 真實瀏覽器版，已實測）** |
+| `court_booking.py` | 查詢／計畫／驗證碼辨識（requests 版，`--plan` `--when` `--check`） |
 | `requirements.txt` | 需要的 Python 套件 |
 | `README.md` | 本文件 |
 | `captcha_sample_1/2.png` | 驗證碼自我測試產生的範例圖 |
@@ -54,6 +55,43 @@ python -m venv .venv
 .\.venv\Scripts\python.exe court_booking.py --test-captcha
 ```
 
+## 正式搶場：`booker_pw.py`（Playwright 真實瀏覽器版）
+
+真實瀏覽器會執行網站全部 JavaScript，`[申請]` 按鈕、驗證碼視窗都像真人看到的一樣出現，
+比純 HTTP 模擬可靠。**這是實際用來搶場的腳本。**
+
+```powershell
+# 帳密用環境變數注入（不落檔、不進 git）
+$env:NDHU_USER='你的學號'
+$env:NDHU_PASS='你的密碼'
+
+# 試跑：走到「驗證碼辨識＋填入」就停，不送出（驗證整條鏈路）
+.\.venv\Scripts\python.exe booker_pw.py --date 2026/11/12 --field VOL0H --dry-run
+
+# 正式搶：搶指定日期 20:00-22:00（--hour 預設 20）
+.\.venv\Scripts\python.exe booker_pw.py --date 2026/11/12 --field VOL0H
+
+# 等到隔天 00:00（開放「當天+12天」）再搶
+.\.venv\Scripts\python.exe booker_pw.py --date 2026/11/12 --field VOL0H --wait-open
+
+# 顯示瀏覽器畫面（除錯用）
+.\.venv\Scripts\python.exe booker_pw.py --date 2026/11/12 --field VOL0H --dry-run --headed
+```
+
+### 實測通過的完整流程（2026-10-30）
+
+1. 登入（`#MainContent_TxtUSERNO` / `#MainContent_TxtPWD` / `#MainContent_Button1`）
+2. 選類型=排球（`#MainContent_drpkind` = `2`）→ 選場地（`#MainContent_DropDownList1` = `VOL0H`）
+3. 查詢（`#MainContent_Button1`）→ **91 個 `[申請]` 按鈕出現**（橫跨 7 天欄）
+4. **新增申請（`#MainContent_Button2`）→ 建立申請單**（少了這步，點 `[申請]` 會被擋：「請新增一張申請單…」）
+5. 點目標日期＋時段的 `[申請]` 鈕 → 驗證碼視窗（`#imgCaptcha` 是 `data:image/jpeg;base64,...`）
+6. **即時讀 base64 → ddddocr 辨識 → 填入 `#txtCaptchaValue`**（絕不手動下載圖片）
+7. 點視窗「申請」（`doApp`）→ 時段加入申請單 → 按「確定」（`#MainContent_Button4`）鎖單
+
+- 驗證碼答錯最多重試 **5 次**（每次換一張新圖重新辨識）
+- 每個動作間隔 **≥2 秒**，不對系統洪水式請求
+- `--dry-run` 實測：辨識 `QQRRX` 並成功填入，停在送出前
+
 ## 小隊長指定的規則（寫在 `court_booking.py` 頂端常數區）
 
 - 類型只選**排球**（`TARGET_KIND_VALUE = "2"`）
@@ -91,13 +129,16 @@ python -m venv .venv
 - `--when`：通過（11/12→10/31、11/16→11/04、窗內日期→現在就可搶、過期日期→來不及，四種情況都對）
 - 「每組只搶一張」記憶：通過（假資料實測：已搶過星期一組會被跳過、兩組都搶過就不排）
 - `--book --dry-run`：**待小隊長實測**（需要真實帳號；這一步會把登入後的頁面結構寫進 `debug_outline.txt`）
+- **`booker_pw.py --dry-run`（2026-10-30 實測通過）**：登入 → 查詢（91 個 `[申請]` 鈕）→ 新增申請單 →
+  點 `[申請]20~22` → 驗證碼視窗出現 → 讀 base64 → ddddocr 辨識 `QQRRX` → 成功填入 → 停在送出前。
+  驗證碼以真實圖片辨識，與畫面一致（先前測過 `FI06K` 全對）。
 
 ## 已知限制
 
-1. 登入後「新增申請 → 驗證碼」的頁面結構還沒用真實帳號看過，選擇器可能需要對一次焦；
-   先跑 `--book --dry-run`，把 `debug_outline.txt` 給領隊即可對準。
-2. 驗證碼辨識率以真實圖片為準；自我測試用的是同類型合成圖。
-3. 只搶「當前開放的那一週」；要看/搶下一週，等那天 00:00 之後再跑。
+1. **送出後的最終狀態**（`doApp` 是否直接提交、按「確定」後系統回應）尚未實測——`--dry-run` 刻意停在送出前。
+   正式搶場時會印出每步狀態供確認。
+2. 驗證碼辨識率以真實圖片為準；自我測試用的是同類型合成圖，真實圖已驗證可讀。
+3. 只搶「當前開放的那一週」；要看/搶下一週，等那天 00:00 之後再跑（用 `--wait-open` 自動等）。
 
 ## 紅線（請勿修改）
 

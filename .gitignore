@@ -2,3 +2,7 @@
 __pycache__/
 debug_outline.txt
 booked_state.json
+_dbg_*.py
+_dbg_captcha.png
+_pw_*.py
+_real_captcha.jpg
